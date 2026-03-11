@@ -24,15 +24,60 @@ import streamlit as st
 DB_PATH = "telemetry.db"
 
 
+def _db_has_tables():
+    """Return True if the DB file exists and contains the expected tables."""
+    if not Path(DB_PATH).exists():
+        return False
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        tables = {
+            row[0]
+            for row in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            ).fetchall()
+        }
+        conn.close()
+        return "employees" in tables and "events" in tables
+    except Exception:
+        return False
+
+
 def _ensure_database():
     """Generate data and build the DB if it doesn't exist yet (e.g. on Streamlit Cloud)."""
-    if Path(DB_PATH).exists():
+    if _db_has_tables():
         return
-    st.info("First run detected — generating data and building database...")
+
+    # Remove incomplete / empty DB so ingest.py can start fresh
+    if Path(DB_PATH).exists():
+        Path(DB_PATH).unlink()
+
+    st.info("First run detected — generating data and building database…")
     python = sys.executable
-    subprocess.run([python, "generate_fake_data.py"], check=True)
-    subprocess.run([python, "ingest.py"], check=True)
+
+    # Only generate data if output files are missing (they are gitignored)
+    if not Path("output/telemetry_logs.jsonl").exists():
+        result = subprocess.run(
+            [python, "generate_fake_data.py"], capture_output=True, text=True
+        )
+        if result.returncode != 0:
+            st.error(f"Data generation failed:\n```\n{result.stderr}\n```")
+            st.stop()
+
+    result = subprocess.run(
+        [python, "ingest.py"], capture_output=True, text=True
+    )
+    if result.returncode != 0:
+        st.error(f"Database ingestion failed:\n```\n{result.stderr}\n```")
+        st.stop()
+
+    # Clear cached DB connection so the new database is picked up
+    get_db.clear()
     st.rerun()
+
+
+@st.cache_resource
+def get_db():
+    return sqlite3.connect(DB_PATH, check_same_thread=False)
 
 
 _ensure_database()
@@ -43,11 +88,6 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded",
 )
-
-
-@st.cache_resource
-def get_db():
-    return sqlite3.connect(DB_PATH, check_same_thread=False)
 
 
 @st.cache_data(ttl=60)
