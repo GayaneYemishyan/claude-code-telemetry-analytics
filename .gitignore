@@ -1,0 +1,12 @@
+.venv/
+
+__pycache__/
+*.pyc
+
+telemetry.db
+telemetry.db-shm
+telemetry.db-wal
+
+output/
+
+._*
