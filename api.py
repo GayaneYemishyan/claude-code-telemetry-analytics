@@ -422,3 +422,138 @@ def detect_anomalies(contamination: float = Query(default=0.05, ge=0.01, le=0.2)
         "contamination": contamination,
         "anomalous_sessions": anomalies,
     }
+
+
+# ---------- Token Forecast ----------
+
+@app.get("/predict/token-forecast")
+def token_forecast(days: int = Query(default=14, le=60)):
+    """Linear trend forecast for daily token usage."""
+    import numpy as np
+    from sklearn.linear_model import LinearRegression
+
+    data = query("""
+        SELECT DATE(e.event_timestamp) AS date,
+            SUM(ar.input_tokens + ar.output_tokens) AS daily_tokens
+        FROM api_requests ar JOIN events e ON ar.event_id = e.id
+        GROUP BY date ORDER BY date
+    """)
+    if len(data) < 5:
+        return {"error": "Insufficient data for forecasting"}
+
+    day_nums = list(range(len(data)))
+    tokens = [r["daily_tokens"] for r in data]
+
+    X = np.array(day_nums).reshape(-1, 1)
+    y = np.array(tokens)
+    model = LinearRegression().fit(X, y)
+
+    future_X = np.arange(len(data), len(data) + days).reshape(-1, 1)
+    forecast = model.predict(future_X).tolist()
+
+    return {
+        "r_squared": round(model.score(X, y), 4),
+        "slope_per_day": round(float(model.coef_[0]), 1),
+        "forecast_days": days,
+        "forecast_total_tokens": round(sum(forecast), 0),
+        "daily_forecast": [round(v, 0) for v in forecast],
+    }
+
+
+# ---------- Statistical Analysis ----------
+
+@app.get("/stats/seniority-cost-correlation")
+def seniority_cost_correlation():
+    """Pearson correlation between seniority level and cost per user."""
+    from scipy import stats
+
+    data = query("""
+        SELECT
+            CAST(REPLACE(emp.level, 'L', '') AS INTEGER) AS level_num,
+            ROUND(SUM(ar.cost_usd) / COUNT(DISTINCT e.user_email), 2) AS cost_per_user
+        FROM api_requests ar
+        JOIN events e ON ar.event_id = e.id
+        JOIN employees emp ON e.user_email = emp.email
+        GROUP BY emp.level ORDER BY level_num
+    """)
+    if len(data) < 3:
+        return {"error": "Insufficient data"}
+
+    levels = [r["level_num"] for r in data]
+    costs = [r["cost_per_user"] for r in data]
+    r, p_val = stats.pearsonr(levels, costs)
+    return {
+        "pearson_r": round(r, 4),
+        "p_value": round(p_val, 4),
+        "significant": p_val < 0.05,
+        "data": data,
+    }
+
+
+@app.get("/stats/practice-cost-comparison")
+def practice_cost_comparison():
+    """Kruskal-Wallis test for cost differences across practices."""
+    from scipy import stats
+    import numpy as np
+
+    data = query("""
+        SELECT emp.practice, ar.cost_usd
+        FROM api_requests ar
+        JOIN events e ON ar.event_id = e.id
+        JOIN employees emp ON e.user_email = emp.email
+    """)
+    if not data:
+        return {"error": "No data"}
+
+    groups = {}
+    for r in data:
+        groups.setdefault(r["practice"], []).append(r["cost_usd"])
+
+    if len(groups) < 2:
+        return {"error": "Need at least 2 practices"}
+
+    stat, p_val = stats.kruskal(*groups.values())
+    summaries = []
+    for prac, costs in sorted(groups.items()):
+        arr = np.array(costs)
+        summaries.append({
+            "practice": prac,
+            "count": len(costs),
+            "mean_cost": round(float(arr.mean()), 4),
+            "median_cost": round(float(np.median(arr)), 4),
+            "std_cost": round(float(arr.std()), 4),
+        })
+
+    return {
+        "kruskal_wallis_H": round(float(stat), 4),
+        "p_value": round(float(p_val), 4),
+        "significant": p_val < 0.05,
+        "practices": summaries,
+    }
+
+
+@app.get("/stats/practice-patterns")
+def practice_patterns():
+    """Practice-specific model and tool usage patterns."""
+    model_prefs = query("""
+        SELECT emp.practice, ar.model,
+            COUNT(*) AS requests,
+            ROUND(SUM(ar.cost_usd), 2) AS total_cost,
+            ROUND(AVG(ar.input_tokens + ar.output_tokens), 0) AS avg_tokens
+        FROM api_requests ar
+        JOIN events e ON ar.event_id = e.id
+        JOIN employees emp ON e.user_email = emp.email
+        GROUP BY emp.practice, ar.model
+        ORDER BY emp.practice, requests DESC
+    """)
+    tool_prefs = query("""
+        SELECT emp.practice, tr.tool_name,
+            COUNT(*) AS uses,
+            ROUND(100.0 * SUM(tr.success) / COUNT(*), 1) AS success_rate
+        FROM tool_results tr
+        JOIN events e ON tr.event_id = e.id
+        JOIN employees emp ON e.user_email = emp.email
+        GROUP BY emp.practice, tr.tool_name
+        ORDER BY emp.practice, uses DESC
+    """)
+    return {"model_preferences": model_prefs, "tool_preferences": tool_prefs}

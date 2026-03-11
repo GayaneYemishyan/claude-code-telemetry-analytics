@@ -763,6 +763,48 @@ with tab_predict:
         st.info(f"**Linear model R²**: {r2:.3f} | **Daily trend**: ${model.coef_[0]:+.3f}/day | "
                 f"**14-day forecast total**: ${forecast.sum():.2f}")
 
+    # --- Token usage forecast ---
+    st.markdown("### Daily Token Usage Forecast")
+    tok_daily_pred = load_df("""
+        SELECT DATE(e.event_timestamp) AS date,
+            SUM(ar.input_tokens + ar.output_tokens) AS daily_tokens
+        FROM api_requests ar
+        JOIN events e ON ar.event_id = e.id
+        GROUP BY date ORDER BY date
+    """)
+
+    if not tok_daily_pred.empty and len(tok_daily_pred) >= 5:
+        import numpy as np
+        from sklearn.linear_model import LinearRegression
+
+        tok_daily_pred["date_dt"] = pd.to_datetime(tok_daily_pred["date"])
+        tok_daily_pred["day_num"] = (tok_daily_pred["date_dt"] - tok_daily_pred["date_dt"].min()).dt.days
+
+        X_t = tok_daily_pred[["day_num"]].values
+        y_t = tok_daily_pred["daily_tokens"].values
+        model_t = LinearRegression().fit(X_t, y_t)
+
+        last_day_t = tok_daily_pred["day_num"].max()
+        future_days_t = np.arange(last_day_t + 1, last_day_t + 15).reshape(-1, 1)
+        future_dates_t = [tok_daily_pred["date_dt"].max() + timedelta(days=i) for i in range(1, 15)]
+        forecast_t = model_t.predict(future_days_t)
+
+        fig = go.Figure()
+        fig.add_trace(go.Scatter(x=tok_daily_pred["date_dt"], y=tok_daily_pred["daily_tokens"],
+                                 name="Actual", mode="lines+markers"))
+        fig.add_trace(go.Scatter(x=tok_daily_pred["date_dt"], y=model_t.predict(X_t),
+                                 name="Trend", line=dict(dash="dash", color="gray")))
+        fig.add_trace(go.Scatter(x=future_dates_t, y=forecast_t,
+                                 name="Forecast (14 days)", mode="lines+markers",
+                                 line=dict(dash="dot", color="orange")))
+        fig.update_layout(title=f"Token Usage Forecast (slope: {model_t.coef_[0]:+,.0f} tokens/day)",
+                          xaxis_title="Date", yaxis_title="Daily Tokens")
+        st.plotly_chart(fig, width='stretch')
+
+        r2_t = model_t.score(X_t, y_t)
+        st.info(f"**Linear model R²**: {r2_t:.3f} | **Daily trend**: {model_t.coef_[0]:+,.0f} tokens/day | "
+                f"**14-day forecast total**: {forecast_t.sum():,.0f} tokens")
+
     # --- Anomaly detection on sessions ---
     st.markdown("### Session Anomaly Detection (Isolation Forest)")
     sess_features = load_df("""
@@ -872,6 +914,45 @@ with tab_predict:
                            f"(H={stat:.2f}, p={p_val:.4f})")
             else:
                 st.info(f"**Kruskal-Wallis test**: No significant difference (H={stat:.2f}, p={p_val:.4f})")
+
+    # Practice-specific patterns
+    st.markdown("#### Practice-Specific Model Preferences")
+    model_prefs = load_df("""
+        SELECT emp.practice, ar.model,
+            COUNT(*) AS requests,
+            ROUND(SUM(ar.cost_usd), 2) AS total_cost,
+            ROUND(AVG(ar.input_tokens + ar.output_tokens), 0) AS avg_tokens
+        FROM api_requests ar
+        JOIN events e ON ar.event_id = e.id
+        JOIN employees emp ON e.user_email = emp.email
+        GROUP BY emp.practice, ar.model
+        ORDER BY emp.practice, requests DESC
+    """)
+    if not model_prefs.empty:
+        fig = px.bar(model_prefs, x="practice", y="requests", color="model",
+                     title="Model Usage by Practice", barmode="group",
+                     hover_data=["total_cost", "avg_tokens"])
+        st.plotly_chart(fig, width='stretch')
+
+    st.markdown("#### Practice-Specific Tool Usage Patterns")
+    tool_prefs = load_df("""
+        SELECT emp.practice, tr.tool_name,
+            COUNT(*) AS uses,
+            ROUND(100.0 * SUM(tr.success) / COUNT(*), 1) AS success_rate
+        FROM tool_results tr
+        JOIN events e ON tr.event_id = e.id
+        JOIN employees emp ON e.user_email = emp.email
+        GROUP BY emp.practice, tr.tool_name
+        ORDER BY emp.practice, uses DESC
+    """)
+    if not tool_prefs.empty:
+        # Top 6 tools overall for readability
+        top_tool_names = tool_prefs.groupby("tool_name")["uses"].sum().nlargest(6).index.tolist()
+        filtered_tp = tool_prefs[tool_prefs["tool_name"].isin(top_tool_names)]
+        fig = px.bar(filtered_tp, x="practice", y="uses", color="tool_name",
+                     title="Top Tool Usage by Practice", barmode="group",
+                     hover_data=["success_rate"])
+        st.plotly_chart(fig, width='stretch')
 
 # ===================================================================
 # Real-time simulation (sidebar toggle)

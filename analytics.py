@@ -526,6 +526,195 @@ def top_sessions_by_cost(db, limit=10):
 
 
 # ===================================================================
+# 7. PREDICTIVE ANALYTICS
+# ===================================================================
+
+def cost_forecast(db, forecast_days=14):
+    """Linear regression forecast of daily cost."""
+    import numpy as np
+    from sklearn.linear_model import LinearRegression
+
+    data = cost_trend_daily(db)
+    if len(data) < 5:
+        return {"error": "Insufficient data for forecasting"}
+
+    day_nums = list(range(len(data)))
+    costs = [r["daily_cost"] for r in data]
+
+    X = np.array(day_nums).reshape(-1, 1)
+    y = np.array(costs)
+    model = LinearRegression().fit(X, y)
+    future_X = np.arange(len(data), len(data) + forecast_days).reshape(-1, 1)
+    forecast = model.predict(future_X)
+
+    return {
+        "r_squared": round(model.score(X, y), 4),
+        "slope_per_day": round(float(model.coef_[0]), 4),
+        "forecast_days": forecast_days,
+        "forecast_total_cost": round(float(forecast.sum()), 2),
+        "daily_forecast": [round(float(v), 2) for v in forecast],
+    }
+
+
+def token_forecast(db, forecast_days=14):
+    """Linear regression forecast of daily token usage."""
+    import numpy as np
+    from sklearn.linear_model import LinearRegression
+
+    data = cost_trend_daily(db)
+    if len(data) < 5:
+        return {"error": "Insufficient data for forecasting"}
+
+    day_nums = list(range(len(data)))
+    tokens = [r["daily_tokens"] for r in data]
+
+    X = np.array(day_nums).reshape(-1, 1)
+    y = np.array(tokens)
+    model = LinearRegression().fit(X, y)
+    future_X = np.arange(len(data), len(data) + forecast_days).reshape(-1, 1)
+    forecast = model.predict(future_X)
+
+    return {
+        "r_squared": round(model.score(X, y), 4),
+        "slope_per_day": round(float(model.coef_[0]), 1),
+        "forecast_days": forecast_days,
+        "forecast_total_tokens": round(float(forecast.sum()), 0),
+        "daily_forecast": [round(float(v), 0) for v in forecast],
+    }
+
+
+def detect_anomalous_sessions(db, contamination=0.05):
+    """Detect anomalous sessions using Isolation Forest."""
+    import numpy as np
+    from sklearn.ensemble import IsolationForest
+
+    data = query(db, """
+        SELECT session_id, user_email, practice, level,
+            total_cost_usd, api_call_count, total_input_tokens,
+            total_output_tokens, event_count, duration_seconds
+        FROM v_session_summary WHERE total_cost_usd > 0
+    """)
+    if len(data) < 20:
+        return {"error": "Insufficient data"}
+
+    feature_keys = ["total_cost_usd", "api_call_count", "total_input_tokens",
+                    "total_output_tokens", "event_count", "duration_seconds"]
+    X = np.array([[r.get(k, 0) or 0 for k in feature_keys] for r in data])
+
+    iso = IsolationForest(contamination=contamination, random_state=42)
+    labels = iso.fit_predict(X)
+
+    anomalies = [
+        {**data[i], "anomaly_score": round(float(iso.score_samples(X[i:i+1])[0]), 4)}
+        for i in range(len(data)) if labels[i] == -1
+    ]
+    anomalies.sort(key=lambda x: x["anomaly_score"])
+    return {
+        "total_sessions": len(data),
+        "anomalies_found": len(anomalies),
+        "anomalous_sessions": anomalies,
+    }
+
+
+# ===================================================================
+# 8. STATISTICAL ANALYSIS
+# ===================================================================
+
+def seniority_cost_correlation(db):
+    """Pearson correlation between seniority level and cost per user."""
+    from scipy import stats
+
+    data = query(db, """
+        SELECT
+            CAST(REPLACE(emp.level, 'L', '') AS INTEGER) AS level_num,
+            ROUND(SUM(ar.cost_usd) / COUNT(DISTINCT e.user_email), 2) AS cost_per_user
+        FROM api_requests ar
+        JOIN events e ON ar.event_id = e.id
+        JOIN employees emp ON e.user_email = emp.email
+        GROUP BY emp.level ORDER BY level_num
+    """)
+    if len(data) < 3:
+        return {"error": "Insufficient data"}
+
+    levels = [r["level_num"] for r in data]
+    costs = [r["cost_per_user"] for r in data]
+    r, p_val = stats.pearsonr(levels, costs)
+    return {
+        "pearson_r": round(r, 4),
+        "p_value": round(p_val, 4),
+        "significant": p_val < 0.05,
+        "data": data,
+    }
+
+
+def practice_cost_comparison(db):
+    """Kruskal-Wallis test for cost differences across practices."""
+    from scipy import stats
+
+    data = query(db, """
+        SELECT emp.practice, ar.cost_usd
+        FROM api_requests ar
+        JOIN events e ON ar.event_id = e.id
+        JOIN employees emp ON e.user_email = emp.email
+    """)
+    if not data:
+        return {"error": "No data"}
+
+    groups = {}
+    for r in data:
+        groups.setdefault(r["practice"], []).append(r["cost_usd"])
+
+    if len(groups) < 2:
+        return {"error": "Need at least 2 practices"}
+
+    stat, p_val = stats.kruskal(*groups.values())
+    practice_summaries = []
+    for prac, costs in sorted(groups.items()):
+        import numpy as np
+        arr = np.array(costs)
+        practice_summaries.append({
+            "practice": prac,
+            "count": len(costs),
+            "mean_cost": round(float(arr.mean()), 4),
+            "median_cost": round(float(np.median(arr)), 4),
+            "std_cost": round(float(arr.std()), 4),
+        })
+
+    return {
+        "kruskal_wallis_H": round(float(stat), 4),
+        "p_value": round(float(p_val), 4),
+        "significant": p_val < 0.05,
+        "practices": practice_summaries,
+    }
+
+
+def practice_specific_patterns(db):
+    """Model preferences and tool usage patterns by practice."""
+    model_prefs = query(db, """
+        SELECT emp.practice, ar.model,
+            COUNT(*) AS requests,
+            ROUND(SUM(ar.cost_usd), 2) AS total_cost,
+            ROUND(AVG(ar.input_tokens + ar.output_tokens), 0) AS avg_tokens
+        FROM api_requests ar
+        JOIN events e ON ar.event_id = e.id
+        JOIN employees emp ON e.user_email = emp.email
+        GROUP BY emp.practice, ar.model
+        ORDER BY emp.practice, requests DESC
+    """)
+    tool_prefs = query(db, """
+        SELECT emp.practice, tr.tool_name,
+            COUNT(*) AS uses,
+            ROUND(100.0 * SUM(tr.success) / COUNT(*), 1) AS success_rate
+        FROM tool_results tr
+        JOIN events e ON tr.event_id = e.id
+        JOIN employees emp ON e.user_email = emp.email
+        GROUP BY emp.practice, tr.tool_name
+        ORDER BY emp.practice, uses DESC
+    """)
+    return {"model_preferences": model_prefs, "tool_preferences": tool_prefs}
+
+
+# ===================================================================
 # CLI Report
 # ===================================================================
 
@@ -596,6 +785,53 @@ def report(db_path: str = "telemetry.db"):
     print_table(prompt_length_by_level(db), "PROMPT LENGTH BY SENIORITY")
     print_table(session_duration_by_practice(db), "SESSION DURATION BY PRACTICE")
     print_table(top_sessions_by_cost(db), "TOP 10 MOST EXPENSIVE SESSIONS")
+
+    # --- 7. PREDICTIVE ANALYTICS ---
+    print(f"\n{'='*70}")
+    print(f"  COST FORECAST (14 days)")
+    print(f"{'='*70}")
+    fc = cost_forecast(db)
+    if "error" not in fc:
+        print(f"  R²: {fc['r_squared']}  |  Slope: ${fc['slope_per_day']}/day  |  "
+              f"14-day total: ${fc['forecast_total_cost']}")
+    else:
+        print(f"  {fc['error']}")
+
+    print(f"\n{'='*70}")
+    print(f"  TOKEN FORECAST (14 days)")
+    print(f"{'='*70}")
+    tf = token_forecast(db)
+    if "error" not in tf:
+        print(f"  R²: {tf['r_squared']}  |  Slope: {tf['slope_per_day']} tokens/day  |  "
+              f"14-day total: {tf['forecast_total_tokens']:,.0f}")
+    else:
+        print(f"  {tf['error']}")
+
+    anom = detect_anomalous_sessions(db)
+    if "error" not in anom:
+        print(f"\n{'='*70}")
+        print(f"  ANOMALOUS SESSIONS ({anom['anomalies_found']} of {anom['total_sessions']})")
+        print(f"{'='*70}")
+        print_table(anom['anomalous_sessions'][:10], max_rows=10)
+
+    # --- 8. STATISTICAL ANALYSIS ---
+    corr = seniority_cost_correlation(db)
+    if "error" not in corr:
+        print(f"\n{'='*70}")
+        print(f"  SENIORITY vs COST CORRELATION")
+        print(f"{'='*70}")
+        sig = "YES" if corr['significant'] else "NO"
+        print(f"  Pearson r={corr['pearson_r']}  |  p={corr['p_value']}  |  Significant: {sig}")
+        print_table(corr['data'])
+
+    comparison = practice_cost_comparison(db)
+    if "error" not in comparison:
+        print(f"\n{'='*70}")
+        print(f"  PRACTICE COST COMPARISON (Kruskal-Wallis)")
+        print(f"{'='*70}")
+        sig = "YES" if comparison['significant'] else "NO"
+        print(f"  H={comparison['kruskal_wallis_H']}  |  p={comparison['p_value']}  |  Significant: {sig}")
+        print_table(comparison['practices'])
 
     db.close()
     print(f"\n{'='*70}")

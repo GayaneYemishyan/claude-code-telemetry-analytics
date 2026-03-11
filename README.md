@@ -32,7 +32,7 @@ analytics.py  dashboard.py  api.py
 |------|---------|
 | `generate_fake_data.py` | Generates synthetic telemetry JSONL and employee CSV (stdlib only) |
 | `ingest.py` | ETL pipeline — parses nested JSONL, flattens events, joins with employees, loads into SQLite |
-| `analytics.py` | Reusable analytics queries + CLI report (token usage, cost, peak hours, tools, errors, sessions) |
+| `analytics.py` | Reusable analytics queries + CLI report (token usage, cost, peak hours, tools, errors, sessions, forecasting, anomaly detection, statistical tests) |
 | `dashboard.py` | Interactive Streamlit dashboard with filters and 8 visualization tabs |
 | `api.py` | FastAPI REST API for programmatic access to all analytics |
 | `requirements.txt` | Pinned Python dependencies |
@@ -64,8 +64,8 @@ analytics.py  dashboard.py  api.py
 ### 1. Clone the repository
 
 ```bash
-git clone <repo-url>
-cd provectus_assignment
+git clone <git@github.com:GayaneYemishyan/claude-code-telemetry-analytics.git>
+cd claude-code-telemetry-analytics
 ```
 
 ### 2. Create and activate a virtual environment
@@ -149,7 +149,7 @@ Interactive docs at `http://localhost:8000/docs`.
 | **Tools** | Tool usage ranking, success rates, practice-specific tool preferences |
 | **Errors** | Error types, error rates by model, error trends |
 | **Sessions** | Session duration distribution, sessions per user, cost per session |
-| **Predictions** | Cost forecasting with trend analysis |
+| **Predictions** | Cost forecast, token usage forecast, session anomaly detection (Isolation Forest), seniority vs cost correlation, duration vs cost correlation, Kruskal-Wallis practice comparison, practice-specific model & tool patterns |
 
 ---
 
@@ -159,24 +159,29 @@ Interactive docs at `http://localhost:8000/docs`.
 |--------|------|-------------|
 | `GET` | `/health` | Health check |
 | `GET` | `/employees` | List employees (filterable) |
-| `GET` | `/analytics/tokens/by-model` | Token usage by model |
-| `GET` | `/analytics/tokens/by-practice` | Token usage by practice |
-| `GET` | `/analytics/tokens/by-level` | Token usage by seniority |
-| `GET` | `/analytics/cost/by-user` | Cost per user |
-| `GET` | `/analytics/cost/daily` | Daily cost trend |
-| `GET` | `/analytics/cost/sessions` | Cost per session |
-| `GET` | `/analytics/usage/hourly` | Hourly usage distribution |
-| `GET` | `/analytics/usage/daily` | Daily usage patterns |
-| `GET` | `/analytics/usage/business-hours` | Business vs. off-hours |
-| `GET` | `/analytics/tools/summary` | Tool usage summary |
-| `GET` | `/analytics/tools/by-practice` | Tools by practice |
-| `GET` | `/analytics/errors/by-type` | Errors by type |
-| `GET` | `/analytics/errors/by-model` | Errors by model |
-| `GET` | `/analytics/sessions` | Session overview |
-| `GET` | `/analytics/sessions/{id}` | Session detail |
-| `GET` | `/analytics/forecast/cost` | Cost forecast (next N days) |
+| `GET` | `/tokens/by-model` | Token usage by model |
+| `GET` | `/tokens/by-practice` | Token usage by practice |
+| `GET` | `/tokens/by-level` | Token usage by seniority |
+| `GET` | `/cost/by-user` | Cost per user |
+| `GET` | `/cost/daily` | Daily cost trend |
+| `GET` | `/cost/sessions` | Cost per session |
+| `GET` | `/usage/hourly` | Hourly usage distribution |
+| `GET` | `/usage/daily` | Daily usage patterns |
+| `GET` | `/usage/business-hours` | Business vs. off-hours |
+| `GET` | `/tools/summary` | Tool usage summary |
+| `GET` | `/tools/by-practice` | Tools by practice |
+| `GET` | `/errors/by-type` | Errors by type |
+| `GET` | `/errors/by-model` | Errors by model |
+| `GET` | `/sessions/overview` | Session overview |
+| `GET` | `/sessions/{session_id}` | Session detail |
+| `GET` | `/predict/cost-forecast` | Cost forecast (linear regression, configurable days) |
+| `GET` | `/predict/token-forecast` | Token usage forecast (linear regression) |
+| `GET` | `/predict/anomalies` | Anomalous session detection (Isolation Forest) |
+| `GET` | `/stats/seniority-cost-correlation` | Pearson correlation: seniority vs cost |
+| `GET` | `/stats/practice-cost-comparison` | Kruskal-Wallis test across practices |
+| `GET` | `/stats/practice-patterns` | Practice-specific model & tool preferences |
 
-All analytics endpoints accept optional query parameters: `practice`, `level`, `location`, `model`, `date_start`, `date_end`.
+All endpoints accept optional query parameters where applicable: `practice`, `level`, `location`, `model`, `date_start`, `date_end`.
 
 ---
 
@@ -196,6 +201,29 @@ Core libraries (see `requirements.txt` for pinned versions):
 | `fastapi` | REST API framework |
 | `starlette` | ASGI framework (FastAPI dependency) |
 | `uvicorn` | ASGI server (install separately: `pip install uvicorn`) |
+
+---
+
+## Bonus Features (Step 5)
+
+### Predictive Analytics
+- **Cost forecast** — Linear regression on daily cost with 14-day projection (configurable)
+- **Token usage forecast** — Linear regression on daily token consumption
+- **Anomaly detection** — Isolation Forest on session features (cost, tokens, duration, API calls) to flag outlier sessions
+
+### Real-time Simulation
+- Sidebar toggle in the dashboard streams simulated telemetry events with a live-updating chart and event log
+
+### API Layer
+- FastAPI REST API with 24 endpoints covering all analytics, predictions, and statistical tests
+- Auto-generated Swagger docs at `/docs`
+- CORS-enabled for frontend integration
+
+### Statistical Analysis
+- **Seniority vs cost** — Pearson correlation with significance test
+- **Session duration vs cost** — Scatter plot with OLS trendline
+- **Practice cost comparison** — Kruskal-Wallis H-test across engineering practices
+- **Practice-specific patterns** — Model preferences and tool usage breakdown per practice
 
 ---
 
@@ -221,8 +249,8 @@ Core libraries (see `requirements.txt` for pinned versions):
 | Data Ingestion | *"Implement data ingestion & storage — parse the nested JSONL, flatten events, join with employee CSV, store in SQLite with a normalized schema"* | `ingest.py` — full ETL pipeline with schema design, JSONL parsing, event flattening, and employee joins |
 | Analytics | *"Implement analytics & insights — token consumption, cost analysis, peak usage times, tool usage patterns, error analysis, session behavior"* | `analytics.py` — 20+ reusable query functions covering all insight areas, plus a CLI report |
 | Dashboard | *"Build a Streamlit app that visualizes the insights with filters by practice, level, location, model, date range"* | `dashboard.py` — 8-tab interactive dashboard with sidebar filters and Plotly charts |
-| Bonus Features | *"Add predictive analytics, real-time simulation, API layer, statistical analysis"* | `api.py` — FastAPI REST API with 18 endpoints; cost forecasting tab in dashboard |
-| README | *"Write a README with detailed setup instructions, architecture overview, and dependency list"* | This README document |
+| Bonus Features | *"Add predictive analytics, real-time simulation, API layer, statistical analysis"* | `api.py` — FastAPI REST API with 24 endpoints; Predictions tab with cost/token forecasting, anomaly detection, and statistical analysis (correlations, hypothesis tests, practice patterns); real-time simulation in dashboard |
+
 
 ### Validation Approach
 
