@@ -922,7 +922,11 @@ with tab_predict:
             r, p_val = stats.pearsonr(level_cost["level_num"], level_cost["cost_per_user"])
             fig = px.scatter(level_cost, x="level_num", y="cost_per_user",
                              title=f"Seniority vs Cost/User (r={r:.3f}, p={p_val:.3f})",
-                             trendline="ols", labels={"level_num": "Level", "cost_per_user": "Cost/User ($)"})
+                             labels={"level_num": "Level", "cost_per_user": "Cost/User ($)"})
+            coeffs = np.polyfit(level_cost["level_num"], level_cost["cost_per_user"], 1)
+            x_range = np.linspace(level_cost["level_num"].min(), level_cost["level_num"].max(), 50)
+            fig.add_trace(go.Scatter(x=x_range, y=np.polyval(coeffs, x_range),
+                                     mode="lines", name="OLS Trend", line=dict(dash="dash")))
             st.plotly_chart(fig, width='stretch')
             if p_val < 0.05:
                 st.success(f"Statistically significant correlation (p={p_val:.3f})")
@@ -943,8 +947,11 @@ with tab_predict:
             fig = px.scatter(dur_cost, x="duration_min", y="total_cost_usd",
                              color="practice", opacity=0.6,
                              title=f"Duration vs Cost (r={r:.3f}, p={p_val:.4f})",
-                             trendline="ols",
                              labels={"duration_min": "Duration (min)", "total_cost_usd": "Cost ($)"})
+            coeffs = np.polyfit(dur_cost["duration_min"], dur_cost["total_cost_usd"], 1)
+            x_range = np.linspace(dur_cost["duration_min"].min(), dur_cost["duration_min"].max(), 50)
+            fig.add_trace(go.Scatter(x=x_range, y=np.polyval(coeffs, x_range),
+                                     mode="lines", name="OLS Trend", line=dict(dash="dash")))
             st.plotly_chart(fig, width='stretch')
 
     # Practice comparison box plots
