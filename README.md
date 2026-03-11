@@ -2,6 +2,8 @@
 
 An end-to-end analytics platform that ingests Claude Code telemetry data, stores it in a normalized SQLite database, surfaces insights through reusable analytics queries, and presents them via an interactive Streamlit dashboard and a REST API.
 
+**Live Demo:** [https://dashboardpy-4j3f4e66skdzuqjhrcaej3.streamlit.app/](https://dashboardpy-4j3f4e66skdzuqjhrcaej3.streamlit.app/)
+
 ---
 
 ## Architecture
@@ -197,7 +199,6 @@ Core libraries (see `requirements.txt` for pinned versions):
 | `numpy` | Numerical computation |
 | `scikit-learn` | Machine learning (predictions) |
 | `scipy` | Scientific computing |
-| `statsmodels` | Statistical analysis / forecasting |
 | `fastapi` | REST API framework |
 | `starlette` | ASGI framework (FastAPI dependency) |
 | `uvicorn` | ASGI server (install separately: `pip install uvicorn`) |
