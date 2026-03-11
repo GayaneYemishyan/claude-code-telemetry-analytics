@@ -7,7 +7,10 @@ Usage:
 """
 
 import sqlite3
+import subprocess
+import sys
 from datetime import datetime, timedelta
+from pathlib import Path
 
 import pandas as pd
 import plotly.express as px
@@ -19,6 +22,20 @@ import streamlit as st
 # ---------------------------------------------------------------------------
 
 DB_PATH = "telemetry.db"
+
+
+def _ensure_database():
+    """Generate data and build the DB if it doesn't exist yet (e.g. on Streamlit Cloud)."""
+    if Path(DB_PATH).exists():
+        return
+    st.info("First run detected — generating data and building database...")
+    python = sys.executable
+    subprocess.run([python, "generate_fake_data.py"], check=True)
+    subprocess.run([python, "ingest.py"], check=True)
+    st.rerun()
+
+
+_ensure_database()
 
 st.set_page_config(
     page_title="Claude Code Telemetry",
