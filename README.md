@@ -128,15 +128,11 @@ python analytics.py
 streamlit run dashboard.py
 ```
 
-Opens at `http://localhost:8501`. Use the sidebar to filter by practice, seniority level, location, model, and date range.
-
 ### 8. Start the REST API
 
 ```bash
 uvicorn api:app --reload --port 8000
 ```
-
-Interactive docs at `http://localhost:8000/docs`.
 
 ---
 
